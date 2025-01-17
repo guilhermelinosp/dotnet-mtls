@@ -3,55 +3,59 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Serilog;
 
-var builder = WebApplication.CreateSlimBuilder(args);
-
-builder.Host.UseSerilog((context, options) =>
-	options.ReadFrom.Configuration(context.Configuration));
-
-builder.WebHost.ConfigureKestrel(kestrel =>
+try
 {
-	kestrel.ListenAnyIP(44378, options =>
+	var builder = WebApplication.CreateSlimBuilder(args);
+
+	builder.Host.UseSerilog((context, options) =>
+		options.ReadFrom.Configuration(context.Configuration));
+
+	builder.WebHost.ConfigureKestrel(kestrel =>
 	{
-		options.UseHttps(https =>
+		kestrel.ListenAnyIP(44378, options =>
 		{
-			try
+			options.UseHttps(https =>
 			{
 				https.ServerCertificate =
-					X509CertificateLoader.LoadPkcs12(File.ReadAllBytes("keys/server.pfx"), "123456");
+					X509CertificateLoader.LoadPkcs12FromFile("keys/server.pfx", "123456");
 				https.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
+				
 				https.ClientCertificateValidation = (cert, chain, sslPolicyErrors) =>
 				{
-					chain!.ChainPolicy.ExtraStore.Add(cert);
+					chain!.ChainPolicy.ExtraStore.Add(X509CertificateLoader.LoadCertificateFromFile("keys/ca.pem"));
+					
+					chain!.Build(cert!);
 
-					return chain.Build(cert!) && sslPolicyErrors == SslPolicyErrors.None;
+					return sslPolicyErrors != SslPolicyErrors.None;
 				};
-			}
-			catch (Exception ex)
-			{
-				Console.WriteLine($"Error setting up HTTPS: {ex.Message}");
-				throw;
-			}
+			});
+			options.UseConnectionLogging();
 		});
-		options.UseConnectionLogging();
 	});
-});
 
-builder.Services.AddDataProtection();
+	builder.Services.AddDataProtection();
 
-var app = builder.Build();
+	var app = builder.Build();
 
-app.Use(async (context, next) =>
-{
-	if (context.Connection.ClientCertificate!.Subject != "CN=localhost")
+	app.Use(async (context, next) =>
 	{
-		context.Response.StatusCode = 403;
-		await context.Response.WriteAsync("Invalid client certificate.");
-		return;
-	}
+		if (context.Connection.ClientCertificate is not { Subject: "CN=client.local" })
+		{
+			context.Response.StatusCode = 403;
+			await context.Response.WriteAsync("Invalid client certificate.");
+			return;
+		}
 
-	await next();
-});
+		await next();
+	});
 
-app.MapGet("/", async context => { await context.Response.WriteAsync("Hello, TLS with mutual authentication!"); });
+	app.MapGet("/", async context => { await context.Response.WriteAsync("Hello, TLS with mutual authentication!"); });
 
-await app.RunAsync();
+	await app.RunAsync();
+}
+catch (Exception ex)
+{
+	Console.WriteLine($"Exception: {ex.Message}");
+	Console.WriteLine($"Inner Exception: {ex.InnerException!.Message}");
+	Console.WriteLine("Stack Trace: " + ex.StackTrace);
+}
