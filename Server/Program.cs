@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Serilog;
 
 var builder = WebApplication.CreateSlimBuilder(args);
-var services = builder.Services;
 
 builder.Host.UseSerilog((context, options) =>
 	options.ReadFrom.Configuration(context.Configuration));
@@ -37,7 +36,7 @@ builder.WebHost.ConfigureKestrel(kestrel =>
 	});
 });
 
-services.AddDataProtection();
+builder.Services.AddDataProtection();
 
 var app = builder.Build();
 
@@ -54,8 +53,5 @@ app.Use(async (context, next) =>
 });
 
 app.MapGet("/", async context => { await context.Response.WriteAsync("Hello, TLS with mutual authentication!"); });
-app.UseHttpsRedirection();
-
-app.UseRouting();
 
 await app.RunAsync();
